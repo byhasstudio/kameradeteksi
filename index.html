@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lensa Deteksi — Kenali Barang Lewat Kamera | by HSBY</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.10.0/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+<style>
+  :root{
+    --navy-950:#0a1428;
+    --navy-900:#0f1c38;
+    --navy-800:#152548;
+    --navy-700:#22345f;
+    --line:#2b3a5e;
+    --white:#f7f9fc;
+    --white-dim:#c3cde0;
+    --accent:#8fa8e0;
+    --box-object:#9fb6ea;
+    --box-person:#e0a86b;
+    --serif: 'Georgia', 'Iowan Old Style', 'Palatino Linotype', serif;
+    --sans: -apple-system, 'Segoe UI', Roboto, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;padding:0;height:100%;
+    background:var(--navy-950);
+    color:var(--white);
+    font-family:var(--sans);
+    overflow:hidden;
+  }
+  #app{position:relative;width:100vw;height:100vh;}
+
+  /* ---------- TOP BAR ---------- */
+  #topbar{
+    position:absolute;top:0;left:0;right:0;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 16px;
+    z-index:40;
+    background:linear-gradient(180deg, rgba(10,20,40,0.75), transparent);
+    pointer-events:none;
+  }
+  #topbar > *{pointer-events:auto;}
+  .brand{
+    display:flex;align-items:baseline;gap:8px;
+    font-family:var(--serif);
+    font-size:16px;letter-spacing:1px;font-weight:normal;color:var(--white);
+  }
+  .brand .sub{font-size:9px;letter-spacing:3px;color:var(--white-dim);font-family:var(--sans);}
+
+  .icon-btn{
+    width:38px;height:38px;
+    border-radius:50%;
+    border:1px solid rgba(255,255,255,0.25);
+    background:rgba(15,28,56,0.7);
+    color:var(--white);
+    display:flex;align-items:center;justify-content:center;
+    font-size:15px;font-family:var(--serif);font-style:italic;
+    cursor:pointer;
+    backdrop-filter:blur(4px);
+  }
+  .icon-btn:active{background:rgba(255,255,255,0.15);}
+
+  /* ---------- VIDEO / CANVAS ---------- */
+  #video, #overlay{
+    position:absolute;top:0;left:0;
+    width:100%;height:100%;
+    object-fit:cover;
+  }
+  #overlay{pointer-events:none;z-index:10;}
+
+  #vignette{
+    position:absolute;inset:0;z-index:16;pointer-events:none;
+    background:radial-gradient(ellipse at center, transparent 60%, rgba(10,20,40,0.45) 100%);
+  }
+
+  /* ---------- STATUS PANEL ---------- */
+  #status{
+    position:absolute; top:64px; left:14px;
+    z-index:30;
+    font-size:11px;
+    background:rgba(15,28,56,0.55);
+    border:1px solid rgba(255,255,255,0.15);
+    border-radius:10px;
+    padding:10px 14px;
+    line-height:1.7;
+    letter-spacing:0.3px;
+    min-width:150px;
+    backdrop-filter:blur(6px);
+    color:var(--white-dim);
+  }
+  #status b{color:var(--white);font-weight:600;}
+
+  /* ---------- BOTTOM BAR ---------- */
+  #bottombar{
+    position:absolute;bottom:0;left:0;right:0;
+    z-index:40;
+    display:flex;flex-direction:column;align-items:center;
+    gap:14px;
+    padding:16px 16px calc(48px + env(safe-area-inset-bottom));
+    background:linear-gradient(0deg, rgba(10,20,40,0.8), transparent);
+  }
+
+  #controls{
+    display:flex;align-items:center;justify-content:center;
+    gap:26px;
+  }
+  #shutter{
+    width:64px;height:64px;border-radius:50%;
+    border:2px solid var(--white);
+    background:rgba(255,255,255,0.08);
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;
+  }
+  #shutter::after{
+    content:'';
+    width:46px;height:46px;border-radius:50%;
+    background:var(--white);
+    transition:background 0.2s;
+  }
+  #shutter.off::after{background:var(--box-person);}
+
+  .side-btn{
+    width:48px;height:48px;border-radius:50%;
+    border:1px solid rgba(255,255,255,0.25);
+    background:rgba(15,28,56,0.7);
+    color:var(--white);
+    font-size:18px;
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;
+    backdrop-filter:blur(4px);
+  }
+  .side-btn:active{background:rgba(255,255,255,0.15);}
+
+  /* ---------- GUIDE MODAL ---------- */
+  #guideOverlay{
+    position:fixed;inset:0;z-index:100;
+    background:rgba(10,20,40,0.75);
+    backdrop-filter:blur(6px);
+    display:none;
+    align-items:center;justify-content:center;
+    padding:20px;
+  }
+  #guideOverlay.open{display:flex;}
+  #guideCard{
+    width:100%;max-width:440px;max-height:86vh;
+    overflow-y:auto;
+    background:var(--white);
+    color:var(--navy-950);
+    border-radius:18px;
+    box-shadow:0 20px 60px rgba(0,0,0,0.4);
+    padding:26px 24px 28px;
+    position:relative;
+  }
+  .guide-eyebrow{
+    font-size:10px;letter-spacing:3px;color:var(--navy-700);
+    margin-bottom:6px;font-weight:600;
+  }
+  #guideCard h2{
+    margin:0 0 18px;font-size:24px;font-family:var(--serif);font-weight:normal;color:var(--navy-950);
+  }
+  .guide-step{
+    display:flex;gap:14px;margin-bottom:16px;
+  }
+  .guide-step .num{
+    font-family:var(--serif);font-style:italic;
+    font-size:15px;color:var(--navy-700);min-width:24px;
+  }
+  .guide-step .body b{color:var(--navy-950);}
+  .guide-step .body{font-size:13px;line-height:1.6;color:#4a5670;}
+  .guide-legend{
+    margin-top:10px;
+    display:flex;flex-direction:column;gap:10px;
+    font-size:13px;
+    border-top:1px solid #e4e8f2;
+    padding-top:16px;
+  }
+  .legend-row{display:flex;align-items:center;gap:10px;color:#4a5670;}
+  .swatch{width:16px;height:16px;border-radius:5px;border:2px solid;flex-shrink:0;}
+  .swatch.object{border-color:var(--box-object);background:rgba(159,182,234,0.15);}
+  .swatch.person{border-color:var(--box-person);background:rgba(224,168,107,0.15);}
+  #closeGuide{
+    margin-top:22px;width:100%;
+    padding:13px;
+    background:var(--navy-950);
+    border:none;border-radius:10px;
+    color:var(--white);
+    letter-spacing:1px;font-size:13px;font-family:var(--sans);font-weight:600;
+    cursor:pointer;
+  }
+  #closeGuide:active{opacity:0.85;}
+  .guide-credit{
+    margin-top:16px;text-align:center;
+    font-size:10px;letter-spacing:1px;color:#9aa5bd;
+  }
+  .guide-credit b{color:var(--navy-800);}
+
+  /* ---------- boot / permission screen ---------- */
+  #boot{
+    position:absolute;inset:0;z-index:60;
+    background:
+      radial-gradient(ellipse at 20% 0%, rgba(143,168,224,0.16), transparent 55%),
+      radial-gradient(ellipse at 85% 100%, rgba(224,168,107,0.10), transparent 55%),
+      linear-gradient(160deg, var(--navy-950), var(--navy-800));
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:18px;text-align:center;padding:24px;
+  }
+  #boot .badge{
+    display:flex;align-items:center;justify-content:center;
+    width:72px;height:72px;border-radius:22px;
+    background:linear-gradient(145deg, var(--navy-700), var(--navy-800));
+    border:1px solid rgba(255,255,255,0.18);
+    box-shadow:0 12px 30px rgba(0,0,0,0.35);
+    font-size:30px;
+    margin-bottom:2px;
+  }
+  #boot .ring{
+    width:44px;height:44px;border-radius:50%;
+    border:1.5px solid rgba(255,255,255,0.3);
+    display:none;align-items:center;justify-content:center;
+    position:relative;
+  }
+  #boot .ring.spin{display:flex;}
+  #boot .ring::before{
+    content:'';position:absolute;inset:-1.5px;border-radius:50%;
+    border:1.5px solid transparent;
+    border-top-color:var(--white);
+    animation:spin 1.4s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .boot-eyebrow{
+    font-size:10px;letter-spacing:4px;color:var(--accent);font-weight:600;
+    text-transform:uppercase;
+  }
+  #boot h1{
+    font-size:30px;letter-spacing:0.3px;color:var(--white);margin:0;font-family:var(--serif);font-weight:normal;
+  }
+  #boot p{font-size:14px;color:var(--white-dim);max-width:290px;line-height:1.7;margin:0;}
+  #bootBtn{
+    margin-top:10px;padding:15px 36px;
+    background:var(--white);color:var(--navy-950);
+    border:none;border-radius:30px;font-family:var(--sans);font-weight:600;
+    letter-spacing:0.5px;font-size:14px;cursor:pointer;
+    box-shadow:0 10px 24px rgba(0,0,0,0.25);
+    display:flex;align-items:center;gap:10px;
+  }
+  #bootBtn:active{opacity:0.85;}
+  #bootErr{color:var(--box-person);font-size:12px;display:none;max-width:280px;line-height:1.6;}
+
+  .boot-features{
+    display:flex;gap:18px;margin-top:4px;
+    font-size:11px;color:var(--white-dim);
+  }
+  .boot-features span{display:flex;align-items:center;gap:6px;}
+  .boot-features .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);}
+
+  #bootFooter{
+    position:absolute;bottom:22px;left:0;right:0;
+    text-align:center;
+    font-size:11px;letter-spacing:1px;color:var(--white-dim);
+    opacity:0.7;
+  }
+  #bootFooter b{color:var(--white);font-weight:600;letter-spacing:1.5px;}
+
+  ::-webkit-scrollbar{width:5px;}
+  ::-webkit-scrollbar-thumb{background:var(--navy-700);border-radius:3px;}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
+  <div id="vignette"></div>
+
+  <div id="topbar">
+    <div class="brand">Lensa Deteksi<span class="sub">HSBY</span></div>
+    <button class="icon-btn" id="guideBtn" title="Cara pakai">?</button>
+  </div>
+
+  <div id="status">
+    Status: <b id="statusText">lagi muat…</b><br>
+    Kelihatan: <b id="objCount">0</b><br>
+    FPS: <b id="fpsText">–</b>
+  </div>
+
+  <div id="bottombar">
+    <div id="controls">
+      <button class="side-btn" id="switchCam" title="Ganti kamera">⟳</button>
+      <div id="shutter" title="Jeda / lanjut deteksi"></div>
+      <button class="side-btn" id="snapBtn" title="Foto layar">◎</button>
+    </div>
+  </div>
+
+  <!-- BOOT SCREEN -->
+  <div id="boot">
+    <div class="badge">🔎</div>
+    <div class="ring" id="bootRing"></div>
+    <div class="boot-eyebrow">Aplikasi Resmi</div>
+    <h1>Lensa Deteksi</h1>
+    <p>Arahkan HP kamu ke sekitar, dan aplikasi ini bakal langsung ngenalin barang atau orang yang kelihatan di kamera. Semua diproses di HP kamu sendiri, jadi nggak ada data yang dikirim ke mana-mana.</p>
+    <button id="bootBtn">Nyalain Kamera</button>
+    <p id="bootErr">Kameranya nggak bisa diakses nih. Coba cek dulu izin kamera di pengaturan browser kamu ya.</p>
+    <div class="boot-features">
+      <span><span class="dot"></span>Gratis</span>
+      <span><span class="dot"></span>Aman & Privat</span>
+      <span><span class="dot"></span>Tanpa Ribet</span>
+    </div>
+    <div id="bootFooter">Dibuat oleh : <b>HSBY</b></div>
+  </div>
+
+  <!-- GUIDE MODAL -->
+  <div id="guideOverlay">
+    <div id="guideCard">
+      <div class="guide-eyebrow">CARA PAKAI</div>
+      <h2>Gampang kok, gini caranya</h2>
+
+      <div class="guide-step">
+        <div class="num">1</div>
+        <div class="body"><b>Izinin kamera.</b> Klik tombol "Nyalain Kamera", terus pas muncul minta izin, klik "Izinkan" aja.</div>
+      </div>
+      <div class="guide-step">
+        <div class="num">2</div>
+        <div class="body"><b>Arahin ke sekitar.</b> Coba arahin kamera ke orang, kendaraan, atau barang apa aja — nanti otomatis muncul kotak di sekelilingnya.</div>
+      </div>
+      <div class="guide-step">
+        <div class="num">3</div>
+        <div class="body"><b>Lihat keterangannya.</b> Di tiap kotak ada nama barangnya sama persentase seberapa yakin aplikasi ini sama tebakannya.</div>
+      </div>
+      <div class="guide-step">
+        <div class="num">4</div>
+        <div class="body"><b>Tombol tengah (bulat besar).</b> Buat jeda atau lanjutin deteksinya kapan aja.</div>
+      </div>
+      <div class="guide-step">
+        <div class="num">5</div>
+        <div class="body"><b>Tombol ⟳.</b> Buat ganti kamera, dari belakang ke depan atau sebaliknya.</div>
+      </div>
+      <div class="guide-step">
+        <div class="num">6</div>
+        <div class="body"><b>Tombol ◎.</b> Buat foto layar kamera lengkap sama kotak deteksinya, terus otomatis kesimpen di HP kamu.</div>
+      </div>
+
+      <div class="guide-legend">
+        <div class="legend-row"><div class="swatch object"></div> Kotak biru — buat barang atau kendaraan</div>
+        <div class="legend-row"><div class="swatch person"></div> Kotak cokelat — buat orang</div>
+      </div>
+
+      <button id="closeGuide">Oke, ngerti</button>
+
+      <div class="guide-credit">Lensa Deteksi · Dibuat oleh <b>HSBY</b></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  const video = document.getElementById('video');
+  const overlay = document.getElementById('overlay');
+  const ctx = overlay.getContext('2d');
+  const statusText = document.getElementById('statusText');
+  const objCount = document.getElementById('objCount');
+  const fpsText = document.getElementById('fpsText');
+  const boot = document.getElementById('boot');
+  const bootBtn = document.getElementById('bootBtn');
+  const bootErr = document.getElementById('bootErr');
+  const guideBtn = document.getElementById('guideBtn');
+  const guideOverlay = document.getElementById('guideOverlay');
+  const closeGuide = document.getElementById('closeGuide');
+  const shutter = document.getElementById('shutter');
+  const switchCam = document.getElementById('switchCam');
+  const snapBtn = document.getElementById('snapBtn');
+
+  let model = null;
+  let running = true;
+  let currentFacing = 'environment';
+  let stream = null;
+  let detecting = false;       // guard: hindari overlap antar-detect
+  let lastPreds = [];          // hasil deteksi terakhir (target), dipakai untuk gambar tiap frame
+  let smoothPreds = [];        // posisi kotak yang benar2 dirender, gerak halus menuju lastPreds
+  let nextSmoothId = 1;
+  const SMOOTH_FACTOR = 0.12;  // rendah = gerak paling mulus; nilai TINGGI (mendekati 1) justru mematikan efek smoothing (kotak langsung lompat ke posisi baru)
+  let fpsCounter = 0;
+  let fpsLastCheck = performance.now();
+
+  // downscale canvas khusus buat model.detect() -> proses jauh lebih cepat
+  const inferCanvas = document.createElement('canvas');
+  const inferCtx = inferCanvas.getContext('2d', { willReadFrequently:true });
+  const INFER_W = 640; // diturunkan dari 1280 -> inferensi lebih cepat, target posisi update lebih sering, gerak kotak lebih mulus
+
+  const idMap = {
+    person:'Orang', bicycle:'Sepeda', car:'Mobil', motorcycle:'Motor',
+    airplane:'Pesawat', bus:'Bus', train:'Kereta', truck:'Truk', boat:'Perahu',
+    'traffic light':'Lampu Lalin', 'fire hydrant':'Hidran', 'stop sign':'Rambu Stop',
+    bench:'Bangku', bird:'Burung', cat:'Kucing', dog:'Anjing', horse:'Kuda',
+    sheep:'Domba', cow:'Sapi', elephant:'Gajah', bear:'Beruang', zebra:'Zebra',
+    giraffe:'Jerapah', backpack:'Ransel', umbrella:'Payung', handbag:'Tas',
+    suitcase:'Koper', bottle:'Botol', cup:'Cangkir', chair:'Kursi',
+    couch:'Sofa', 'potted plant':'Tanaman Pot', bed:'Kasur',
+    'dining table':'Meja Makan', tv:'TV', laptop:'Laptop',
+    'cell phone':'HP', book:'Buku', clock:'Jam', vase:'Vas',
+    scissors:'Gunting', 'teddy bear':'Boneka',
+    'parking meter':'Meteran Parkir', tie:'Dasi', frisbee:'Cakram',
+    skis:'Ski', snowboard:'Papan Salju', 'sports ball':'Bola',
+    kite:'Layang-layang', 'baseball bat':'Pemukul Baseball',
+    'baseball glove':'Sarung Tangan Baseball', skateboard:'Skateboard',
+    surfboard:'Papan Selancar', 'tennis racket':'Raket Tenis',
+    'wine glass':'Gelas Anggur', fork:'Garpu', knife:'Pisau',
+    spoon:'Sendok', bowl:'Mangkuk', banana:'Pisang', apple:'Apel',
+    sandwich:'Sandwich', orange:'Jeruk', broccoli:'Brokoli',
+    carrot:'Wortel', 'hot dog':'Hot Dog', pizza:'Pizza', donut:'Donat',
+    cake:'Kue', toilet:'Toilet', mouse:'Mouse', remote:'Remote',
+    keyboard:'Keyboard', microwave:'Microwave', oven:'Oven',
+    toaster:'Pemanggang Roti', sink:'Wastafel', refrigerator:'Kulkas',
+    'hair drier':'Pengering Rambut', toothbrush:'Sikat Gigi'
+  };
+  function label(cls){ return idMap[cls] || cls; }
+
+  function resizeCanvas(){
+    overlay.width = overlay.clientWidth;
+    overlay.height = overlay.clientHeight;
+  }
+  window.addEventListener('resize', resizeCanvas);
+
+  async function startCamera(facing){
+    if(stream){ stream.getTracks().forEach(t=>t.stop()); }
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({
+        video:{ facingMode: facing, width:{ideal:1280}, height:{ideal:720} },
+        audio:false
+      });
+      video.srcObject = stream;
+      await video.play();
+      resizeCanvas();
+      return true;
+    }catch(e){
+      console.error(e);
+      return false;
+    }
+  }
+
+  const bootRing = document.getElementById('bootRing');
+
+  bootBtn.addEventListener('click', async ()=>{
+    bootBtn.disabled = true;
+    bootBtn.textContent = 'Nyambungin…';
+    bootRing.classList.add('spin');
+    const ok = await startCamera(currentFacing);
+    if(!ok){
+      bootErr.style.display = 'block';
+      bootBtn.disabled = false;
+      bootBtn.textContent = 'Nyalain Kamera';
+      bootRing.classList.remove('spin');
+      return;
+    }
+    boot.style.display = 'none';
+    statusText.textContent = 'lagi nyiapin…';
+    try{
+      model = await cocoSsd.load(); // model default (mobilenet_v2), paling stabil di berbagai browser
+      statusText.textContent = 'aktif';
+      inferLoop();
+      drawLoop();
+    }catch(e){
+      console.error('Gagal memuat model:', e);
+      statusText.textContent = 'gagal muat: ' + (e && e.message ? e.message : 'coba refresh halamannya');
+    }
+  });
+
+  switchCam.addEventListener('click', async ()=>{
+    currentFacing = currentFacing === 'environment' ? 'user' : 'environment';
+    await startCamera(currentFacing);
+  });
+
+  shutter.addEventListener('click', ()=>{
+    running = !running;
+    shutter.classList.toggle('off', !running);
+    statusText.textContent = running ? 'aktif' : 'lagi jeda';
+  });
+
+  snapBtn.addEventListener('click', ()=>{
+    const out = document.createElement('canvas');
+    out.width = overlay.width; out.height = overlay.height;
+    const octx = out.getContext('2d');
+    const { scale, dx, dy } = getCoverTransform(video.videoWidth, video.videoHeight, out.width, out.height);
+    octx.drawImage(video, dx, dy, video.videoWidth*scale, video.videoHeight*scale);
+    octx.drawImage(overlay, 0, 0);
+    const link = document.createElement('a');
+    link.download = 'lensa-deteksi-' + Date.now() + '.png';
+    link.href = out.toDataURL('image/png');
+    link.click();
+  });
+
+  guideBtn.addEventListener('click', ()=> guideOverlay.classList.add('open'));
+  closeGuide.addEventListener('click', ()=> guideOverlay.classList.remove('open'));
+  guideOverlay.addEventListener('click', (e)=>{ if(e.target===guideOverlay) guideOverlay.classList.remove('open'); });
+
+  // Video ditampilkan pakai object-fit:cover, jadi video asli di-crop & di-scale
+  // biar penuh mengisi kontainer. Titik koordinat dari model (dalam piksel video asli)
+  // harus dipetakan pakai transformasi cover yang sama, kalau tidak kotak deteksi
+  // akan geser dari objek aslinya begitu rasio video ≠ rasio layar.
+  function getCoverTransform(vw, vh, cw, ch){
+    const scale = Math.max(cw / vw, ch / vh);
+    const dx = (cw - vw * scale) / 2;
+    const dy = (ch - vh * scale) / 2;
+    return { scale, dx, dy };
+  }
+
+  function estimateDistance(boxHeight, videoHeight){
+    const ratio = boxHeight / videoHeight;
+    const dist = (1 / Math.max(ratio,0.02)) * 1.1;
+    return Math.max(0.5, Math.min(30, dist)).toFixed(1);
+  }
+
+  // Cocokkan prediksi baru dengan kotak smooth yang sedang berjalan (berdasar kelas +
+  // jarak pusat kotak terdekat), supaya kotak yang sama terusnya "meluncur" bukan lompat.
+  function matchSmoothPreds(newPreds){
+    const used = new Set();
+    const matched = newPreds.map(np=>{
+      const [nx,ny,nw,nh] = np.bbox;
+      const ncx = nx+nw/2, ncy = ny+nh/2;
+      let best = null, bestDist = Infinity;
+      smoothPreds.forEach(sp=>{
+        if(used.has(sp.id) || sp.class !== np.class) return;
+        const [sx,sy,sw,sh] = sp.bbox;
+        const scx = sx+sw/2, scy = sy+sh/2;
+        const d = Math.hypot(ncx-scx, ncy-scy);
+        if(d < bestDist){ bestDist = d; best = sp; }
+      });
+      // jarak wajar dianggap objek yang sama; kalau terlalu jauh, anggap objek baru
+      if(best && bestDist < Math.max(nw,nh)*1.2){
+        used.add(best.id);
+        return { id:best.id, class:np.class, score:np.score, bbox:np.bbox.slice(), target:np.bbox };
+      }
+      return { id: nextSmoothId++, class:np.class, score:np.score, bbox:np.bbox.slice(), target:np.bbox };
+    });
+    smoothPreds = matched;
+  }
+
+  // ---- LOOP 1: inferensi model, jalan async tanpa memblok render ----
+  async function inferLoop(){
+    if(!running || !model || video.readyState !== 4 || detecting){
+      requestAnimationFrame(inferLoop);
+      return;
+    }
+    detecting = true;
+    try{
+      const vw = video.videoWidth, vh = video.videoHeight;
+      const scale = INFER_W / vw;
+      const iw = INFER_W, ih = Math.round(vh * scale);
+      inferCanvas.width = iw; inferCanvas.height = ih;
+      inferCtx.drawImage(video, 0, 0, iw, ih);
+
+      // ambang skor 0.05 & max 160 kotak -> sangat sensitif, tapi makin rawan salah label & makin berat (bisa bikin patah-patah lagi)
+      // ambang skor 0.2 -> lebih peka, tapi risiko salah label naik dibanding 0.4
+      const preds = await model.detect(inferCanvas, 30, 0.2);
+      // skala balik ke ukuran video asli
+      lastPreds = preds.map(p=>({
+        class:p.class, score:p.score,
+        bbox:[ p.bbox[0]/scale, p.bbox[1]/scale, p.bbox[2]/scale, p.bbox[3]/scale ]
+      }));
+      objCount.textContent = lastPreds.length;
+      matchSmoothPreds(lastPreds);
+      if(statusText.textContent.indexOf('error') === 0) statusText.textContent = 'aktif';
+    }catch(e){
+      console.error('Error deteksi:', e);
+      statusText.textContent = 'error: ' + (e && e.message ? e.message : 'gagal deteksi');
+    }
+    detecting = false;
+    requestAnimationFrame(inferLoop);
+  }
+
+  // ---- LOOP 2: render tiap frame, interpolasi posisi kotak biar geraknya mulus ----
+  function drawLoop(){
+    if(video.readyState === 4){
+      ctx.clearRect(0,0,overlay.width, overlay.height);
+      const { scale, dx, dy } = getCoverTransform(video.videoWidth, video.videoHeight, overlay.width, overlay.height);
+
+      smoothPreds.forEach(p=>{
+        // gerakkan bbox tampilan sedikit demi sedikit menuju target terbaru
+        for(let i=0;i<4;i++){
+          p.bbox[i] += (p.target[i] - p.bbox[i]) * SMOOTH_FACTOR;
+        }
+        const [x,y,w,h] = p.bbox;
+        const bx = x*scale+dx, by = y*scale+dy, bw = w*scale, bh = h*scale;
+        const isPerson = p.class === 'person';
+        const color = isPerson ? '#e0a86b' : '#9fb6ea';
+        const pct = Math.round(p.score*100);
+        const dist = estimateDistance(bh, overlay.height);
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        if(ctx.roundRect){ ctx.roundRect(bx, by, bw, bh, 8); ctx.stroke(); }
+        else { ctx.strokeRect(bx, by, bw, bh); }
+
+        const text = `${label(p.class)} · ${pct}% · ${dist}m`;
+        ctx.font = '600 12px -apple-system, Segoe UI, sans-serif';
+        const tw = ctx.measureText(text).width;
+        ctx.fillStyle = 'rgba(10,20,40,0.75)';
+        ctx.beginPath();
+        if(ctx.roundRect){ ctx.roundRect(bx, by-24, tw+16, 20, 6); ctx.fill(); }
+        else { ctx.fillRect(bx, by-24, tw+16, 20); }
+        ctx.fillStyle = '#f7f9fc';
+        ctx.fillText(text, bx+8, by-10);
+      });
+
+      fpsCounter++;
+      const now = performance.now();
+      if(now - fpsLastCheck >= 1000){
+        fpsText.textContent = fpsCounter;
+        fpsCounter = 0;
+        fpsLastCheck = now;
+      }
+    }
+    requestAnimationFrame(drawLoop);
+  }
+
+})();
+</script>
+</body>
+</html>
